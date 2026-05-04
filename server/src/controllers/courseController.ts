@@ -42,16 +42,17 @@ export const createCourse = async (
   res: Response
 ): Promise<void> => {
   try {
-    const { teacherId, teacherName } = req.body;
+    const { userId } = getAuth(req);
+    const { teacherName } = req.body;
 
-    if (!teacherId || !teacherName) {
-      res.status(400).json({ message: "Teacher Id and name are required" });
+    if (!userId || !teacherName) {
+      res.status(400).json({ message: "Teacher login and name are required" });
       return;
     }
 
     const newCourse = new Course({
       courseId: uuidv4(),
-      teacherId,
+      teacherId: userId,
       teacherName,
       title: "Untitled Course",
       description: "",
@@ -63,13 +64,16 @@ export const createCourse = async (
       sections: [],
       enrollments: [],
     });
+
     await newCourse.save();
 
     res.json({ message: "Course created successfully", data: newCourse });
   } catch (error) {
+    console.error("CREATE COURSE ERROR:", error);
     res.status(500).json({ message: "Error creating course", error });
   }
 };
+
 
 export const updateCourse = async (
   req: Request,
@@ -80,21 +84,31 @@ export const updateCourse = async (
   const { userId } = getAuth(req);
 
   try {
+    console.log("Logged in userId:", userId);
+    console.log("Course ID:", courseId);
+    console.log("REQ BODY:", JSON.stringify(req.body, null, 2));
+
     const course = await Course.get(courseId);
+
     if (!course) {
       res.status(404).json({ message: "Course not found" });
       return;
     }
 
-    if (course.teacherId !== userId) {
-      res
-        .status(403)
-        .json({ message: "Not authorized to update this course " });
+    console.log("Course teacherId:", course.teacherId);
+
+    if (!userId || course.teacherId !== userId) {
+      res.status(403).json({
+        message: "Not authorized to update this course",
+        loggedInUser: userId,
+        courseTeacher: course.teacherId,
+      });
       return;
     }
 
-    if (updateData.price) {
-      const price = parseInt(updateData.price);
+    if (updateData.price !== undefined && updateData.price !== "") {
+      const price = Number(updateData.price);
+
       if (isNaN(price)) {
         res.status(400).json({
           message: "Invalid price format",
@@ -102,6 +116,7 @@ export const updateCourse = async (
         });
         return;
       }
+
       updateData.price = price * 100;
     }
 
@@ -114,19 +129,45 @@ export const updateCourse = async (
       updateData.sections = sectionsData.map((section: any) => ({
         ...section,
         sectionId: section.sectionId || uuidv4(),
-        chapters: section.chapters.map((chapter: any) => ({
-          ...chapter,
-          chapterId: chapter.chapterId || uuidv4(),
-        })),
+
+        chapters: (section.chapters || []).map((chapter: any) => {
+          let videoValue = "";
+
+          if (typeof chapter.video === "string") {
+            videoValue = chapter.video;
+          } else if (chapter.video?.url) {
+            videoValue = chapter.video.url;
+          } else if (chapter.video?.videoUrl) {
+            videoValue = chapter.video.videoUrl;
+          } else if (chapter.videoFile) {
+            videoValue = chapter.videoFile;
+          }
+
+          return {
+            ...chapter,
+            chapterId: chapter.chapterId || uuidv4(),
+            video: videoValue,
+          };
+        }),
       }));
     }
+
+    console.log("UPDATE DATA:", JSON.stringify(updateData, null, 2));
 
     Object.assign(course, updateData);
     await course.save();
 
-    res.json({ message: "Course updated successfully", data: course });
+    res.json({
+      message: "Course updated successfully",
+      data: course,
+    });
   } catch (error) {
-    res.status(500).json({ message: "Error updating course", error });
+    console.error("UPDATE COURSE ERROR:", error);
+
+    res.status(500).json({
+      message: "Error updating course",
+      error: error instanceof Error ? error.message : error,
+    });
   }
 };
 
